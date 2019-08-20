@@ -198,10 +198,6 @@ def get_beats_nobeats_zones(beats, recording_sample_length, freq, slice_time, va
     if valid_window_size % 2 == 1:
         valid_window_size -= 1
     
-    # Las ventanas totales las divido en dos
-    half_slice_time = np.floor(slice_time / 2).astype(int)
-    half_valid_window_size = np.floor(valid_window_size / 2).astype(int)
-    
     # Si el valid_window_size era cero, solo se quiere donde sea absolutamente valido el latido
     if valid_window_size == 0:
         valid_window_size = 1
@@ -215,19 +211,11 @@ def get_beats_nobeats_zones(beats, recording_sample_length, freq, slice_time, va
     beats_zones = []
     
     for this_annotation in beats:
-        for this_sample in range(slice_time * 2):
-            if this_sample + this_annotation - slice_time >= 0 and this_sample + this_annotation < recording_sample_length - 1:
-                beats_zones.append((this_sample + this_annotation - slice_time, this_sample + this_annotation))
-    
-    """
-    # Esto anda, pero tarda:
-    for ann_counter in range(len(beats)):
-        for slide_counter in range(valid_window_size):
-            this_slide = beats[ann_counter] - half_valid_window_size + slide_counter
-            
-            if this_slide - half_slice_time >= 0 and this_slide + half_slice_time < recording_sample_length:
-                beats_zones.append((int(this_slide - half_slice_time), int(this_slide + half_slice_time)))
-    """
+        for x in range(-valid_window_size - slice_time, valid_window_size):
+            desde = this_annotation + x
+            hasta = this_annotation + x + slice_time
+            if desde >= 0 and hasta <= recording_sample_length - 1:
+                beats_zones.append((desde, hasta))
     
     """
     Lo que queda es las zonas de no latidos. Para esto barro una ventana hasta
@@ -235,36 +223,31 @@ def get_beats_nobeats_zones(beats, recording_sample_length, freq, slice_time, va
     """
     no_beats_zones = []
     
-    """
-    Pajin: Esto lo podes hacer barriendo una lista de tuplas.
-    Declarate una lista con los intervalos (cada tupla es un intervalo),
-    y barres todo ahi adentro nada mas, te salteas lo demas y te ahorras
-    el np.where() que tarda mil años.
-    """
-    
     no_beat_zones_intervals = []
     
+    for this_ann_idx in range(len(beats) - 1):
+        desde = beats[this_ann_idx] + valid_window_size + slice_time
+        hasta = beats[this_ann_idx + 1] - valid_window_size - slice_time
+        no_beat_zones_intervals.append((desde, hasta))
+        
+    """
     for this_annotation in range(len(beats)):
         if this_annotation == 0:
-            if beats[this_annotation] - half_slice_time >= 0:
+            if beats[this_annotation] - valid_window_size - slice_time >= 0:
                 no_beat_zones_intervals.append((this_annotation, beats[this_annotation] - half_slice_time))
         elif this_annotation != len(beats) - 1:
             if beats[this_annotation + 1] - half_slice_time >= 0:
                 no_beat_zones_intervals.append((beats[this_annotation] + half_slice_time, beats[this_annotation + 1] - half_slice_time))
         else:
             no_beat_zones_intervals.append((beats[this_annotation] + half_slice_time, recording_sample_length - 1))
-    
+    """
+
     for this_interval in no_beat_zones_intervals:
-        for this_sample in range(this_interval[1] - this_interval[0] - slice_time):
-            no_beats_zones.append((this_sample, this_sample + slice_time))
-    
-    """
-    # Esto anda, pero tarda:
-    for slide_counter in range(recording_sample_length - valid_window_size - 1):
-        if not np.where(np.logical_and(beats + half_valid_window_size < slide_counter + slice_time, beats - half_valid_window_size > slide_counter))[0].size > 0:
-            if int(slide_counter + slice_time) < recording_sample_length - 1:
-                no_beats_zones.append((int(slide_counter), int(slide_counter + slice_time)))
-    """
+        for x in range(0, (this_interval[1] - this_interval[0]) - slice_time):
+            desde = this_interval[0] + x
+            hasta = this_interval[0] + x + slice_time
+            if desde >= 0 and hasta <= recording_sample_length - 1:
+                no_beats_zones.append((desde, hasta))
     
     return beats_zones, no_beats_zones
 
@@ -355,6 +338,7 @@ def make_train_set(recording, slice_time, valid_window_size, target_freq, channe
             fields['sig_name'] = [channel_names[i] for i in channel_filter]
             fields['units'] = [fields['units'][i] for i in channel_filter]
             fields['n_sig'] = len(channel_filter)
+            fields['beats'] = beats
             
     # Obtencion de zonas de interes (latido/no latido)
     beat_zones, no_beat_zones = get_beats_nobeats_zones(beats, data.shape[0], target_freq, slice_time, valid_window_size)

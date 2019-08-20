@@ -1,51 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Mon Jun 24 16:05:41 2019
+Created on Sun Aug  4 19:50:20 2019
 
 @author: augusto
 """
 
 import os
 import pickle
-import random
+import math
 
-import numpy as np
+import torch
+import torch.nn.functional as F
 
-from keras import backend as K
+from torch.utils.data import Dataset
 
-from keras.utils import Sequence
-
-from keras.models import Sequential
-
-from keras.layers import Conv1D, BatchNormalization, GlobalMaxPooling1D
-from keras.layers import Dense, Activation, Dropout, Flatten
-from keras.layers import AveragePooling1D
-
-from keras.optimizers import Adam
-
-class my_generator(Sequence):
-    """
-    Clase generadora para el entrenamiento de la IA.
-    Por ahora esta hecha para que en cada batch tome un archivo distinto.
-    """
-    def __init__(self, database_source_path, target_file_path, batch_size = 32, beats_rel = 0.7):
-        """
-        Parameters
-        ----------
-        database_source_path : str
-            Ruta al directorio donde se encuentran las muestras.
-        target_file_path : str
-            Ruta al archivo de donde se sacaran las muestras para el
-            entrenamiento.
-        batch_size : int
-            Tamaño del batch size de cada vuelta.
-        beats_rel : float
-            Porcentaje respecto al 100% del batch que se devuelven latidos.
-        """
-        self.batch_size = batch_size
-        self.beats_rel = beats_rel
-        
+class dataset_loader(Dataset):
+    def __init__(self, database_source_path, target_file_path):
         # Abro archivo de entrenamiento pasado y obtengo lista de archivos
         target_file = open(target_file_path, 'r')
         
@@ -78,146 +49,253 @@ class my_generator(Sequence):
             if len(self.shape) == 0:
                 self.shape = (this_data['beat_slices'][0][1] - this_data['beat_slices'][0][0], this_data['data'].shape[1])
             
-            aux_slice_counter = np.floor(len(this_data['beat_slices'])/self.batch_size).astype(int)
-            aux_slice_counter += np.floor(len(this_data['no_beat_slices'])/self.batch_size).astype(int)
+            aux_slice_counter = len(this_data['beat_slices'])
+            aux_slice_counter += len(this_data['no_beat_slices'])
             
-            self.slice_limits.append(aux_slice_counter)
             self.total_slices += aux_slice_counter
+            self.slice_limits.append(self.total_slices)
             
             this_file.close()
         
     def __len__(self):
-        """
-        Tiene que devolver la cantidad de batches que hay en los datos.
-        """
-        return np.floor(self.total_slices / self.batch_size).astype(int)
+        return self.total_slices
     
     def __getitem__(self, idx):
-        """
-        Tiene que devolver un batch de muestras y labels.
-        """
         # Obtengo indice interno
-        real_idx = 0
+        file_idx = 0
         
-        while idx > self.slice_limits[real_idx]:
-            real_idx += 1
+        while idx >= self.slice_limits[file_idx]:
+            file_idx += 1
         
         # Obtengo datos del idx pedido
-        this_data = pickle.load(open(self.file_names[int(real_idx)], 'rb'))
+        this_data = pickle.load(open(self.file_names[int(file_idx)], 'rb'))
         
-        # Esto habria que chequear si es necesario:
-        """
-        this_data['beat_slices'] = this_data['beat_slices'][0:-1]
-        this_data['no_beat_slices'] = this_data['no_beat_slices'][0:-1]
-        """
+        # Con el indice real, devuelvo el dato pedido
+        if file_idx > 0:
+            real_idx = idx - self.slice_limits[file_idx - 1]
+        else:
+            real_idx = idx
         
-        # Dependiendo del batch size, siempre devuelvo una relacion de latidos a no latidos
-        beats_in_batch = int(np.round(self.beats_rel * self.batch_size))
-        no_beats_in_batch = self.batch_size - beats_in_batch
-        
-        beats_indexes = random.sample(range(len(this_data['beat_slices']) - 1), beats_in_batch)
-        no_beats_indexes = random.sample(range(len(this_data['no_beat_slices']) - 1), no_beats_in_batch)
-        
-        # Con los indices, obtengo los datos necesarios
-        batch_x = []
-        batch_y = []
-        
-        for counter in beats_indexes:
-            this_start = this_data['beat_slices'][counter][0]
-            this_end = this_data['beat_slices'][counter][1]
+        if real_idx <= len(this_data['beat_slices']) - 1:
+            # Si es latido, la etiqueta es 1
+            this_start = this_data['beat_slices'][real_idx][0]
+            this_end = this_data['beat_slices'][real_idx][1]
+            y = torch.ones(1, 1, 1)
+        else:
+            # Si es no latido, la etiqueta es 0
+            real_idx -= len(this_data['beat_slices'])
             
-            batch_x.append(this_data['data'][this_start:this_end])
-            batch_y.append(1)
-        
-        for counter in no_beats_indexes:
-            this_start = this_data['no_beat_slices'][counter][0]
-            this_end = this_data['no_beat_slices'][counter][1]
+            this_start = this_data['no_beat_slices'][real_idx][0]
+            this_end = this_data['no_beat_slices'][real_idx][1]
+            y = torch.zeros(1, 1, 1)
             
-            batch_x.append(this_data['data'][this_start:this_end])
-            batch_y.append(0)
+        x = torch.Tensor(this_data['data'][this_start:this_end])
+        x = x.view(1, 1, 24)
         
-        return_x = np.array(batch_x)
-        return_y = np.array(batch_y)
+        return x, y
+
+class qrs_det_1(torch.nn.Module):
+    def __init__(self):
+        super(qrs_det_1, self).__init__()
         
-        return return_x, return_y
+        input_dim = 24
+        
+        conv1_kernel_size = 6
+        conv2_kernel_size = 3
+        
+        lin0_input_size = input_dim
+        lin0_output_size = round(input_dim * 2.5)
+        
+        lin1_input_size = lin0_output_size - conv1_kernel_size - conv2_kernel_size + 2
+        lin1_output_size = input_dim
+        
+        lin2_input_size = lin1_output_size
+        lin2_output_size = 12
+        
+        lin3_input_size = lin2_output_size
+        lin3_output_size = 1
+        
+        self.lin0 = torch.nn.Linear(lin0_input_size, lin0_output_size)
+        self.lin1 = torch.nn.Linear(lin1_input_size, lin1_output_size)
+        self.lin2 = torch.nn.Linear(lin2_input_size, lin2_output_size)
+        self.lin3 = torch.nn.Linear(lin3_input_size, lin3_output_size)
+        
+        self.norm = torch.nn.BatchNorm1d(1)
+        
+        self.conv1 = torch.nn.Conv1d(1, 1, conv1_kernel_size)
+        self.conv2 = torch.nn.Conv1d(1, 1, conv2_kernel_size)
+    
+    def forward(self, x):
+        x = self.norm(F.relu(self.lin0(x)))
+        x = F.relu(F.dropout(self.conv1(x), p = 0.1))
+        x = F.relu(F.dropout(self.conv2(x), p = 0.15))
+        x = F.dropout(F.relu(self.lin1(x)), p = 0.2)
+        x = F.dropout(F.relu(self.lin2(x)), p = 0.5)
+        x = F.sigmoid(self.lin3(x))
+        
+        return x
 
-def t_se(y_true, y_pred):
-    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
-    possible_positives = K.sum(K.round(K.clip(y_true, 0, 1)))
-    recall = true_positives / (possible_positives + K.epsilon())
-    return recall
+class qrs_det_2(torch.nn.Module):
+    def __init__(self):
+        super(qrs_det_2, self).__init__()
+        
+        input_dim = 24
+        
+        self.conv_amount = 10
+        conv_kernel_size = 6
+        conv_padding = (int)(conv_kernel_size / 2)
+        
+        if input_dim % 2 == 0:
+            lin1_input_size = input_dim + self.conv_amount
+        else:
+            lin1_input_size = input_dim
+        
+        lin1_output_size = input_dim
+        
+        lin2_input_size = lin1_output_size
+        lin2_output_size = 12
+        
+        lin3_input_size = lin2_output_size
+        lin3_output_size = 1
+        
+        self.conv0 = torch.nn.Conv1d(1, 1, conv_kernel_size, padding = conv_padding)
+        self.conv1 = torch.nn.Conv1d(1, 1, conv_kernel_size, padding = conv_padding)
+        self.conv2 = torch.nn.Conv1d(1, 1, conv_kernel_size, padding = conv_padding)
+        self.conv3 = torch.nn.Conv1d(1, 1, conv_kernel_size, padding = conv_padding)
+        self.conv4 = torch.nn.Conv1d(1, 1, conv_kernel_size, padding = conv_padding)
+        self.conv5 = torch.nn.Conv1d(1, 1, conv_kernel_size, padding = conv_padding)
+        self.conv6 = torch.nn.Conv1d(1, 1, conv_kernel_size, padding = conv_padding)
+        self.conv7 = torch.nn.Conv1d(1, 1, conv_kernel_size, padding = conv_padding)
+        self.conv8 = torch.nn.Conv1d(1, 1, conv_kernel_size, padding = conv_padding)
+        self.conv9 = torch.nn.Conv1d(1, 1, conv_kernel_size, padding = conv_padding)
+        
+        self.lin1 = torch.nn.Linear(lin1_input_size, lin1_output_size)
+        self.lin2 = torch.nn.Linear(lin2_input_size, lin2_output_size)
+        self.lin3 = torch.nn.Linear(lin3_input_size, lin3_output_size)
+    
+    def forward(self, x):
+        x = self.conv0(x)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        x = self.conv4(x)
+        x = self.conv5(x)
+        x = self.conv6(x)
+        x = self.conv7(x)
+        x = self.conv8(x)
+        x = self.conv9(x)
+    
+        x = F.dropout(F.relu(self.lin1(x)), p = 0.5)
+        x = F.dropout(F.relu(self.lin2(x)), p = 0.2)
+        x = F.sigmoid(self.lin3(x))
+        
+        return x
+    
+class qrs_det_3(torch.nn.Module):
+    def __init__(self):
+        super(qrs_det_3, self).__init__()
+        
+        input_dim = 24
+        
+        conv0_kernel_size = 3
+        conv1_kernel_size = 6
+        conv2_kernel_size = 3
+        
+        lin0_input_size = input_dim
+        lin0_output_size = round(input_dim * 2.5)
+        
+        lin1_input_size = lin0_output_size - conv1_kernel_size - conv2_kernel_size + 2
+        lin1_output_size = input_dim
+        
+        lin2_input_size = lin1_output_size
+        lin2_output_size = 12
+        
+        lin3_input_size = lin2_output_size
+        lin3_output_size = 1
+        
+        self.lin0 = torch.nn.Linear(lin0_input_size, lin0_output_size)
+        self.lin1 = torch.nn.Linear(lin1_input_size, lin1_output_size)
+        self.lin2 = torch.nn.Linear(lin2_input_size, lin2_output_size)
+        self.lin3 = torch.nn.Linear(lin3_input_size, lin3_output_size)
+        
+        self.conv0 = torch.nn.Conv1d(1, 1, conv0_kernel_size, padding = math.floor(conv0_kernel_size / 2))
+        self.conv1 = torch.nn.Conv1d(1, 1, conv1_kernel_size)
+        self.conv2 = torch.nn.Conv1d(1, 1, conv2_kernel_size)
+    
+    def forward(self, x):
+        x = self.conv0(x)
+        x = F.relu(self.lin0(x))
+        x = F.relu(F.dropout(self.conv1(x), p = 0.25))
+        x = F.relu(F.dropout(self.conv2(x), p = 0.2))
+        x = F.dropout(F.relu(self.lin1(x)), p = 0.1)
+        x = F.dropout(F.relu(self.lin2(x)), p = 0.1)
+        x = F.sigmoid(self.lin3(x))
+        
+        return x
 
-def t_pp(y_true, y_pred):
-    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
-    predicted_positives = K.sum(K.round(K.clip(y_pred, 0, 1)))
-    precision = true_positives / (predicted_positives + K.epsilon())
-    return precision
-
-def t_f1(y_true, y_pred):
-    precision = t_pp(y_true, y_pred)
-    recall = t_se(y_true, y_pred)
-    return 2*((precision*recall)/(precision+recall+K.epsilon()))
-
-if __name__ == "__main__":
-    # Tamaño de cada batch
-    batch_size = 512
-    beats_rel = 0.7 # 70% del batch latidos, 30% no latidos
-    total_epochs = 5
+def check_if_valid_beat(slice_range, beats, tolerance = 0):
+    """
+    Funcion para chequear si el rango pasado se encuentra en alguno de los
+    latidos pasados.
     
-    # Creacion de generadores tanto de entrenamiento como validacion
-    train_gen = my_generator('/mnt/Databases/processed/only_MLII/', '/mnt/Databases/processed/only_MLII/train_set.txt', batch_size = batch_size, beats_rel = beats_rel)
-    val_gen = my_generator('/mnt/Databases/processed/only_MLII/', '/mnt/Databases/processed/only_MLII/validation_set.txt', batch_size = batch_size, beats_rel = beats_rel)
+    Parameters
+    ----------
+    slice_range : tuple
+        Tupla indicando el rango a analizar en muestras.
+    beats : list
+        Lista con los latidos en muestras.
+    tolerance : int
+        Tolerancia del rango en muestras.
     
-    # Definicion del modelo
-    model = Sequential()
+    Returns
+    ----------
+    valid_beat : bool
+        True si hay latido en el rango pasado, False de lo contrario.
+    """
+    if tolerance != 0:
+        tolerance = abs(tolerance)
+        slice_range = (slice_range[0] - tolerance, slice_range[1] + tolerance)
     
-    model.add(Conv1D(128,
-                     16,
-                     activation = None,
-                     input_shape = train_gen.shape,
-                     padding = 'valid'))
+    beats = sorted(b for b in beats if b <= slice_range[1])
+    beats = sorted(b for b in beats if b >= max(slice_range[0], 0))
     
-    model.add(BatchNormalization())
+    if len(beats) > 0:
+        return True
+    else:
+        return False
     
-    model.add(Conv1D(128,
-                     16,
-                     activation = 'relu',
-                     padding = 'valid'))
+def make_specifiers(cm):
+    """
+    Funcion para generar indicadores de un algoritmo de deteccion
     
-    model.add(BatchNormalization())
+    Parameters
+    ----------
+    cm : dictionary
+    Confusion Matrix result of the algorithm.
+        TP : True Positives
+        TN : True Negatives
+        FP : False Positives
+        FN : False Negatives
     
-    model.add(GlobalMaxPooling1D())
+    Returns
+    ----------
+    specifiers : dictionary
+        TPR : Sensitivity (TP/(TP + FN))
+        TNR : Specificity (TN/(TN + FP))
+        PPV : Precision (TP/(TP + FP))
+        NPV : Negative predictive value (TN/(TN + FN))
+        ACC : Accuracy ((TP + TN)/(TP + TN + FP + FN))
+        F1 : F1 Score ((2 * TP)/(2 * TP + FP + FN))
+        MCC : Matthews correlation coefficient ((TP * TN - FP * FN)/sqrt((TP + FP)(TP + FN)(TN + FP)(TN + FN)))
+    """
+    specifiers = {}
     
-    model.add(Dense(100))
-    model.add(Activation('relu'))
-    model.add(BatchNormalization())
-    model.add(Dropout(0.5))
+    specifiers['TPR'] = cm['TP'] / (cm['TP'] + cm['FN']) if cm['TP'] + cm['FN'] else 0
+    specifiers['TNR'] = cm['TN'] / (cm['TN'] + cm['FP']) if cm['TN'] + cm['FP'] else 0
+    specifiers['PPV'] = cm['TP'] / (cm['TP'] + cm['FP']) if cm['TP'] + cm['FP'] else 0
+    specifiers['NPV'] = cm['TN'] / (cm['TN'] + cm['FN']) if cm['TN'] + cm['FN'] else 0
+    specifiers['ACC'] = (cm['TP'] + cm['TN']) / (cm['TP'] + cm['TN'] + cm['FP'] + cm['FN']) if cm['TP'] + cm['TN'] + cm['FP'] + cm['FN'] else 0
+    specifiers['F1'] = (2 * cm['TP']) / (2 * cm['TP'] + cm['FP'] + cm['FN']) if 2 * cm['TP'] + cm['FP'] + cm['FN'] else 0
+    specifiers['MCC'] = (cm['TP'] * cm['TN'] - cm['FP'] * cm['FN']) / math.sqrt((cm['TP'] + cm['FP']) * (cm['TP'] + cm['FN']) * (cm['TN'] + cm['FP']) * (cm['TN'] + cm['FN'])) if math.sqrt((cm['TP'] + cm['FP']) * (cm['TP'] + cm['FN']) * (cm['TN'] + cm['FP']) * (cm['TN'] + cm['FN'])) else 0
     
-    model.add(Dense(50))
-    model.add(Activation('relu'))
-    model.add(BatchNormalization())
-    model.add(Dropout(0.25))
-    
-    model.add(Dense(25))
-    model.add(Activation('relu'))
-    model.add(BatchNormalization())
-    model.add(Dropout(0.1))
-    
-    model.add(Dense(1))
-    
-    model.add(Activation('sigmoid'))
-    
-    # Compilacion del modelo
-    model.compile(loss='binary_crossentropy',
-                  optimizer = Adam(),
-                  metrics = [t_f1, t_pp, t_se])
-    
-    # Imprimo caracteristicas del modelo
-    print(model.summary())
-    
-    # Entrenamiento del modelo
-    
-    history = model.fit_generator(train_gen,
-                                  use_multiprocessing = True,
-                                  epochs = total_epochs,
-                                  validation_data = val_gen)
+    return specifiers

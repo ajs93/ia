@@ -7,13 +7,12 @@ Created on Wed Jun 26 21:57:40 2019
 """
 
 import pickle
-import os
 
 import numpy as np
 import matplotlib.pyplot as plt
 
 if __name__ == "__main__":
-    data = pickle.load(open('/mnt/Databases/processed/only_MLII_beta/INCART/I01.bin','rb'))
+    data = pickle.load(open('/home/augusto/Desktop/GIBIO/processed_dbs/only_MLII_beta/mitdb/100.bin','rb'))
     
     parte = data['beat_slices'][25]
     
@@ -23,34 +22,11 @@ if __name__ == "__main__":
     
     t = t * 1000
     
-    plt.plot(t, data['data'][parte[0]:parte[1]])
-    
-    axes = plt.gca()
-    axes.set_ylim([-1,1])
-    axes.set_xlabel('t [mseg]')
-    
-    plt.show()
-    
-    parte = data['beat_slices'][20]
-    
-    plt.plot(t, data['data'][parte[0]:parte[1]])
-    
-    axes = plt.gca()
-    axes.set_ylim([-1,1])
-    axes.set_xlabel('t [mseg]')
-    
-    plt.show()
-    
-    parte = data['no_beat_slices'][0]
-    
-    plt.plot(t, data['data'][parte[0]:parte[1]])
-    
-    axes = plt.gca()
-    axes.set_ylim([-1,1])
-    axes.set_xlabel('t [mseg]')
-    
-    plt.show()
-    
-    for this_part in data['no_beat_slices']:
+    for this_part in data['beat_slices']:
         plt.plot(data['data'][this_part[0]:this_part[1]])
+        
+        axes = plt.gca()
+        axes.set_ylim([-1,1])
+        axes.set_xlabel('t [mseg]')
+        
         plt.show()
