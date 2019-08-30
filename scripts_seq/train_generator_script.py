@@ -31,14 +31,21 @@ def pre_function(data, fields):
 if __name__ == "__main__":
     """
     Script para la generacion de datos para el entrenamiento de la IA.
+    
+    La relacion (no_latidos)/(latidos) sera 3 a 1.
+    
+    La cantidad total de datos, se separara en 3 sets:
+    Entrenamiento = 50%
+    Validacion = 25%
+    Test  25%
     """
     
     # Bases de datos a procesar
     database_directory = '/home/augusto/Desktop/GIBIO/Databases/'
-    databases = ['mitdb']
+    databases = ['mitdb', 'INCART']
     
     # Destino a donde guardar los datos procesados
-    processed_files_directory = '/home/augusto/Desktop/GIBIO/processed_dbs/only_MLII_nofilter'
+    processed_files_directory = '/home/augusto/Desktop/GIBIO/processed_dbs/only_MLII_agosto'
     
     if not processed_files_directory[-1] == os.sep:
         processed_files_directory +=  os.sep
@@ -52,7 +59,7 @@ if __name__ == "__main__":
     test_output_file = open(processed_files_directory + 'test_set.txt', 'w')
     
     # Parametros para la preparacion de los datos
-    target_freq = 250 # Frecuencia objetivo de resmpling
+    target_freq = 250 # Frecuencia objetivo de resampling
     slice_time = 100e-3 # Tiempo en segundos de las ventanas de slice
     valid_window_time = 0e-3 # Margen de tolerancia de la anotacion
     channels = ['MLII', 'II', 'ML2']
@@ -69,7 +76,8 @@ if __name__ == "__main__":
         # Elimino extension
         recording_names = [os.path.splitext(s)[0] for s in recording_names]
         
-        recording_names.sort()
+        # Mezclo al azar los recordings
+        random.shuffle(recording_names)
         
         record_counter = 0
         
@@ -79,13 +87,19 @@ if __name__ == "__main__":
             
             data = {}
             
-            data['beat_slices'], data['no_beat_slices'], data['data'], data['fields'] = data_generation_utils.make_train_set(database_directory + this_database + os.sep + this_record, slice_time, valid_window_time, target_freq, return_intervals = True, channels = channels)
+            data['beat_slices'], data['no_beat_slices'], data['data'], data['fields'] = data_generation_utils.make_train_set(database_directory + this_database + os.sep + this_record,
+                                                                  slice_time,
+                                                                  valid_window_time,
+                                                                  target_freq,
+                                                                  return_intervals = True,
+                                                                  channels = channels,
+                                                                  pre_processing = pre_function)
             
             # Puede que en este recording no haya ningun canal deseado
             if not data['data'] is None:
-                # Debug. Me quedo con la misma cantidad de latidos que no latidos
+                # Debug. Me quedo con la un tercio de latidos que no latidos
                 cant_latidos = len(data['beat_slices'])
-                data['no_beat_slices'] = random.sample(data['no_beat_slices'], min(round(cant_latidos / 1),len(data['no_beat_slices'])))
+                data['no_beat_slices'] = random.sample(data['no_beat_slices'], min(round(cant_latidos * 3), len(data['no_beat_slices'])))
                 
                 # Guardo datos en archivo
                 output_file_name = processed_files_directory + this_database + os.sep + this_record + '.bin'
@@ -101,15 +115,15 @@ if __name__ == "__main__":
                 
                 output_file.close()
                 
-                if record_counter == 0:
+                if record_counter <= 1:
                     train_output_file.write(this_database + os.sep + this_record + '.bin\n')
-                elif record_counter == 1:
+                elif record_counter == 2:
                     validation_output_file.write(this_database + os.sep + this_record + '.bin\n')
                 else:
                     test_output_file.write(this_database + os.sep + this_record + '.bin\n')
                 
                 record_counter += 1
-                record_counter %= 3
+                record_counter %= 4
                 
                 print('Recording ' + this_record + ' processed succesfully.')
             else:

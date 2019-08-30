@@ -95,42 +95,48 @@ class dataset_loader(Dataset):
         return x, y
 
 class qrs_det_1(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, input_dim):
         super(qrs_det_1, self).__init__()
         
-        input_dim = 24
+        self.input_dim = input_dim
         
-        conv1_kernel_size = 6
-        conv2_kernel_size = 3
+        # Al usar kernels pares, es mas facil calcular las dimensiones luego
+        self.conv1_kernel_size = 6
+        self.conv1_in_channels = 1
+        self.conv1_out_channels = 3
         
-        lin0_input_size = input_dim
-        lin0_output_size = round(input_dim * 2.5)
+        self.conv2_kernel_size = 4
+        self.conv2_in_channels = self.conv1_out_channels
+        self.conv2_out_channels = 9
         
-        lin1_input_size = lin0_output_size - conv1_kernel_size - conv2_kernel_size + 2
-        lin1_output_size = input_dim
+        self.lin1_input_size = (self.input_dim + 2) * self.conv2_out_channels
+        self.lin1_output_size = self.input_dim
         
-        lin2_input_size = lin1_output_size
-        lin2_output_size = 12
+        self.lin2_input_size = self.lin1_output_size
+        self.lin2_output_size = 12
         
-        lin3_input_size = lin2_output_size
-        lin3_output_size = 1
+        self.lin3_input_size = self.lin2_output_size
+        self.lin3_output_size = 1
+
+        self.conv1 = torch.nn.Conv1d(self.conv1_in_channels,
+                                     self.conv1_out_channels,
+                                     self.conv1_kernel_size,
+                                     padding = math.floor(self.conv1_kernel_size / 2))
+        self.conv2 = torch.nn.Conv1d(self.conv2_in_channels,
+                                     self.conv2_out_channels,
+                                     self.conv2_kernel_size,
+                                     padding = math.floor(self.conv2_kernel_size / 2))
         
-        self.lin0 = torch.nn.Linear(lin0_input_size, lin0_output_size)
-        self.lin1 = torch.nn.Linear(lin1_input_size, lin1_output_size)
-        self.lin2 = torch.nn.Linear(lin2_input_size, lin2_output_size)
-        self.lin3 = torch.nn.Linear(lin3_input_size, lin3_output_size)
-        
-        self.norm = torch.nn.BatchNorm1d(1)
-        
-        self.conv1 = torch.nn.Conv1d(1, 1, conv1_kernel_size)
-        self.conv2 = torch.nn.Conv1d(1, 1, conv2_kernel_size)
+        self.lin1 = torch.nn.Linear(self.lin1_input_size, self.lin1_output_size)
+        self.lin2 = torch.nn.Linear(self.lin2_input_size, self.lin2_output_size)
+        self.lin3 = torch.nn.Linear(self.lin3_input_size, self.lin3_output_size)
     
     def forward(self, x):
-        x = self.norm(F.relu(self.lin0(x)))
-        x = F.relu(F.dropout(self.conv1(x), p = 0.1))
-        x = F.relu(F.dropout(self.conv2(x), p = 0.15))
-        x = F.dropout(F.relu(self.lin1(x)), p = 0.2)
-        x = F.dropout(F.relu(self.lin2(x)), p = 0.5)
+        x = F.relu(F.dropout(self.conv1(x), p = 0.2))
+        x = F.relu(F.dropout(self.conv2(x), p = 0.2))
+        x = x.view(1, 1, self.lin1_input_size) # Flattening
+        x = F.dropout(F.relu(self.lin1(x)), p = 0.1)
+        x = F.dropout(F.relu(self.lin2(x)), p = 0.1)
         x = F.sigmoid(self.lin3(x))
         
         return x

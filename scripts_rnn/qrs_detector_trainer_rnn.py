@@ -8,6 +8,7 @@ Created on Mon Jun 24 16:05:41 2019
 
 import os
 import pickle
+import time
 
 from colorama import Fore
 
@@ -18,42 +19,44 @@ import torch
 from torch.utils.data import DataLoader
 
 if __name__ == "__main__":
-    # Tamaño de cada batch
-    batch_size = 256
-    total_epochs = 10
-    batchs_per_epoch = 100
+    start_time = time.time()
+    train_time_in_secs = 6 * 60 * 60 # 6 horas
     
-    # Creacion de generadores tanto de entrenamiento como validacion
-    train_gen = qrs_detector.dataset_loader('/home/augusto/Desktop/GIBIO/processed_dbs/only_MLII_nofilter',
-                             '/home/augusto/Desktop/GIBIO/processed_dbs/only_MLII_nofilter/train_set.txt')
+    # Tamaño de cada batch
+    batch_size = 512
+    total_epochs = 1
+    batchs_per_epoch = 0
+    
+    # Creacion de generador de entrenamiento
+    train_gen = qrs_detector.dataset_loader_rnn('/home/augusto/Desktop/GIBIO/processed_dbs/only_MLII_rnn',
+                             '/home/augusto/Desktop/GIBIO/processed_dbs/only_MLII_rnn/train_set.txt')
 
     # Donde guardar el modelo
-    model_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia"
-    model_filename = "qrs_det_model_3_nofilter.pt"
+    model_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia/trained_models/model_rnn"
+    model_filename = "qrs_det_model_rnn.pt"
     
     # Donde guardar historia del entrenamiento
-    train_progress_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia"
-    train_progress_filename = "qrs_det_model_3_training_nofilter.bin"
-    
-    progress_file = open(os.path.join(train_progress_path, train_progress_filename), 'wb')
+    train_progress_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia/trained_models/model_rnn"
+    train_progress_filename = "qrs_det_model_rnn_training.bin"
 
     train_dataloader = DataLoader(train_gen,
                                   batch_size = batch_size,
-                                  shuffle = True,
+                                  shuffle = False,
                                   num_workers = 3)
     
     # Definicion del modelo
-    model = qrs_detector.qrs_det_3()
+    model = qrs_detector.qrs_det_rnn(train_gen.dim)
     
     loss_fn = torch.nn.MSELoss(reduction = 'sum')
     
-    learning_rate = 1e-3
+    learning_rate = 100e-6
     
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     
     print("Entering training loop...")
     
     train_progress = []
+    hidden_state = None
     
     for this_epoch in range(total_epochs):
         print(Fore.BLACK + "Epoch: {}/{}".format(this_epoch, total_epochs))
@@ -61,8 +64,12 @@ if __name__ == "__main__":
         epoch_progress = []
         
         for this_batch, samples in enumerate(train_dataloader):
-            if this_batch >= batchs_per_epoch:
-                break
+            if batchs_per_epoch > 0:
+                if this_batch >= batchs_per_epoch:
+                    break
+            else:
+                if time.time() - start_time > train_time_in_secs:
+                    break
             
             batch_train_progress = {}
             
@@ -73,12 +80,14 @@ if __name__ == "__main__":
             batch_confusion_matrix['FN'] = 0
             
             for this_idx in range(len(samples[0])):
-                y_pred = model(samples[0][this_idx])
+                y_pred, hidden_state = model(samples[0][this_idx], hidden_state)
                 this_loss = loss_fn(y_pred, samples[1][this_idx])
                 optimizer.zero_grad()
                 this_loss.backward()
                 optimizer.step()
-            
+                
+                #print("loss: {}".format(this_loss.item()))
+                
                 if y_pred.item() >= 0.5:
                     # La IA interpreto que hay latido
                     if samples[1][this_idx].item() == 1:
@@ -99,16 +108,24 @@ if __name__ == "__main__":
             batch_train_progress['confusion_matrix'] = batch_confusion_matrix
             batch_train_progress['specifiers'] = qrs_detector.make_specifiers(batch_confusion_matrix)
             
-            if batch_train_progress['specifiers']['MCC'] <= -0.3:
-                print(Fore.RED + "Batch idx: {}/{} - MCC: {}".format(this_batch, batchs_per_epoch, batch_train_progress['specifiers']['MCC']))
-            elif batch_train_progress['specifiers']['MCC'] <= 0.3:
-                print(Fore.BLUE + "Batch idx: {}/{} - MCC: {}".format(this_batch, batchs_per_epoch, batch_train_progress['specifiers']['MCC']))
+            if batch_train_progress['specifiers']['F1'] <= 0.65:
+                print(Fore.RED + "Batch idx: {}/{} - F1: {}".format(this_batch,
+                                                                     batchs_per_epoch if batchs_per_epoch > 0 else train_dataloader.__len__(),
+                                                                     batch_train_progress['specifiers']['F1']))
+            elif batch_train_progress['specifiers']['F1'] <= 0.9:
+                print(Fore.BLUE + "Batch idx: {}/{} - F1: {}".format(this_batch,
+                                                                      batchs_per_epoch if batchs_per_epoch > 0 else train_dataloader.__len__(),
+                                                                      batch_train_progress['specifiers']['F1']))
             else:
-                print(Fore.GREEN + "Batch idx: {}/{} - MCC: {}".format(this_batch, batchs_per_epoch, batch_train_progress['specifiers']['MCC']))
+                print(Fore.GREEN + "Batch idx: {}/{} - F1: {}".format(this_batch,
+                                                                       batchs_per_epoch if batchs_per_epoch > 0 else train_dataloader.__len__(),
+                                                                       batch_train_progress['specifiers']['F1']))
+            
+            print(Fore.BLACK + "Elapsed time: {} secs".format(time.time() - start_time))
             
             epoch_progress.append(batch_train_progress)
         
         train_progress.append(epoch_progress)
     
     torch.save(model.state_dict(), os.path.join(model_path, model_filename))
-    pickle.dump(train_progress, progress_file)
+    pickle.dump(train_progress, open(os.path.join(train_progress_path, train_progress_filename), 'wb'))
