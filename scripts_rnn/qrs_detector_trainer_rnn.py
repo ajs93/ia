@@ -23,7 +23,7 @@ if __name__ == "__main__":
     train_time_in_secs = 6 * 60 * 60 # 6 horas
     
     # Tamaño de cada batch
-    batch_size = 512
+    batch_size = 4096
     total_epochs = 1
     batchs_per_epoch = 0
     

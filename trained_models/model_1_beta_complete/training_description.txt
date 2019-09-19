@@ -1,0 +1,5 @@
+3 epocas
+Todo el dataset, 14622783 (catorce millones seiscientos veintidos mil setescientos ochenta y tres) muestras
+
+Total:
+43868349 (cuarenta y tres millones ochoscientos sesenta y ocho mil trescientos cuarenta y nueve) muestras

@@ -15,6 +15,7 @@ import qrs_detector
 import torch
 
 from prettytable import PrettyTable
+from progress.bar import ChargingBar
 
 def make_table(results):
     table = PrettyTable()
@@ -68,8 +69,8 @@ if __name__ == "__main__":
     slice_samples = 24
     
     # Ruta y nombre del modelo guardado
-    ia_file_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia/trained_models/model_1"
-    ia_filename = "qrs_det_model_1.pt"
+    ia_file_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia/trained_models/model_1_beta_large"
+    ia_filename = "qrs_det_model_1_epoch_9.pt"
     
     # Archivos contra los que testear
     test_path = "/home/augusto/Desktop/GIBIO/processed_dbs/only_MLII_agosto"
@@ -77,8 +78,8 @@ if __name__ == "__main__":
     test_filename = "validation_set.txt"
     
     # Ruta y nombre donde guardar los resultados
-    save_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia/trained_models/model_1"
-    save_filename = "qrs_det_model_1_results"
+    save_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia/trained_models/model_1_beta_large"
+    save_filename = "qrs_det_model_1_epoch_9_results"
     
     if realistic_check:
         save_filename += "_realistic.bin"
@@ -95,7 +96,7 @@ if __name__ == "__main__":
         test_file_handler.close()
         
         # Modelo de IA a testear
-        model = qrs_detector.qrs_det_1(24)
+        model = qrs_detector.qrs_det_1_beta(slice_samples)
         model.load_state_dict(torch.load(os.path.join(ia_file_path, ia_filename)))
         model.eval()
         
@@ -113,7 +114,7 @@ if __name__ == "__main__":
         else:
             print("Mode: Full check.")
         
-        for this_file_idx, this_file in enumerate(test_filepaths):
+        for this_file_idx, (this_file, this_filename) in enumerate(zip(test_filepaths, test_files)):
             print("Evaluating file {}/{}".format(this_file_idx + 1, len(test_filepaths)))
             this_conf_matrix = {}
             this_conf_matrix['TP'] = 0
@@ -124,13 +125,23 @@ if __name__ == "__main__":
             # Cargo datos
             data = pickle.load(open(this_file, 'rb'))
             
+            progress_bar = ChargingBar("Evaluating file {} - {}/{}".format(this_filename, this_file_idx + 1, len(test_filepaths)),
+                                           suffix = "%(percent)d%%")
+            
             if realistic_check:
                 # Separo datos en pedazos
                 sign = [data['data'][i:i + slice_samples] for i in range(0, len(data['data']), slice_samples)]
                 
+                progress_bar.max = len(sign)
+                progress_bar.start()
+                
                 for this_slice_idx, this_slice in enumerate(sign):
+                    """
                     if this_slice_idx % (round(len(sign) / 20)) == 0:
                         print("{}/{} slices evaluated.".format(this_slice_idx, len(sign)))
+                    """
+                    
+                    progress_bar.next()
                     
                     # Si no pongo este if, el ultimo pedazo podria ser de distinto tamaño y fallar
                     if len(this_slice) == slice_samples:
@@ -162,9 +173,16 @@ if __name__ == "__main__":
                                 this_conf_matrix['TN'] += 1
                 
             else:
+                progress_bar.max = len(data['beat_slices']) + len(data['no_beat_slices'])
+                progress_bar.start()
+                
                 for this_slice_idx, this_slice in enumerate(data['beat_slices']):
+                    """
                     if this_slice_idx % (round(len(data['beat_slices']) / 20)) == 0:
                         print("{}/{} beat slices evaluated.".format(this_slice_idx, len(data['beat_slices'])))
+                    """
+                    
+                    progress_bar.next()
                     
                     this_data = torch.Tensor(data['data'][this_slice[0]:this_slice[1]])
                     this_data = this_data.view(1, 1, slice_samples) # Reshape
@@ -178,8 +196,12 @@ if __name__ == "__main__":
                         this_conf_matrix['FN'] += 1
                 
                 for this_slice_idx, this_slice in enumerate(data['no_beat_slices']):
+                    """
                     if this_slice_idx % (round(len(data['no_beat_slices']) / 20)) == 0:
                         print("{}/{} no beat slices evaluated.".format(this_slice_idx, len(data['no_beat_slices'])))
+                    """
+                    
+                    progress_bar.next()
                     
                     this_data = torch.Tensor(data['data'][this_slice[0]:this_slice[1]])
                     this_data = this_data.view(1, 1, slice_samples) # Reshape
@@ -191,6 +213,8 @@ if __name__ == "__main__":
                     else:
                         # La IA interpreto que no hay latido, TN
                         this_conf_matrix['TN'] += 1
+            
+            progress_bar.finish()
             
             # Termino de armar la matriz de confusion, imprimo resultados
             this_specifiers = qrs_detector.make_specifiers(this_conf_matrix)
@@ -218,3 +242,6 @@ if __name__ == "__main__":
     
     # Termino todos los archivos, guardo el analisis
     pickle.dump(results, open(os.path.join(save_path, save_filename), 'wb'))
+    
+    print("Press any key to finish...")
+    input()

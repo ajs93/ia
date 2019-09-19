@@ -9,6 +9,7 @@ Created on Fri Aug 30 09:00:12 2019
 import os
 import pickle
 import torch
+import math
 
 from torch.utils.data import Dataset
 
@@ -40,6 +41,8 @@ class dataset_loader_rnn(Dataset):
         self.file_limits = []
         self.total_slices = 0
         self.dim = None
+        self.current_file_idx = -1
+        self.current_data = None
         
         for this_filename in self.file_names:
             this_data = pickle.load(open(this_filename, 'rb'))
@@ -63,8 +66,10 @@ class dataset_loader_rnn(Dataset):
         while idx >= self.file_limits[file_idx]:
             file_idx += 1
         
-        # Obtengo datos del idx pedido
-        this_data = pickle.load(open(self.file_names[int(file_idx)], 'rb'))
+        # Como el entrenador va a ir en orden, mantengo un archivo abierto
+        if file_idx != self.current_file_idx:
+            # Si es un archivo distinto, abro el archivo nuevo
+            self.current_data = pickle.load(open(self.file_names[int(file_idx)], 'rb'))        
         
         # Con el indice real, devuelvo el dato pedido
         if file_idx > 0:
@@ -72,10 +77,10 @@ class dataset_loader_rnn(Dataset):
         else:
             real_idx = idx
         
-        x = torch.Tensor(this_data['slices'][real_idx])
+        x = torch.Tensor(self.current_data['slices'][real_idx])
         x = x.view(1, 1, 24)
         
-        if this_data['labels'][real_idx] == 0:
+        if self.current_data['labels'][real_idx] == 0:
             y = torch.zeros(1, 1, 1)
         else:
             y = torch.ones(1, 1, 1)
@@ -109,3 +114,39 @@ class qrs_det_rnn(torch.nn.Module):
         x = self.sig(x)
         
         return x, hidden
+    
+def make_specifiers(cm):
+    """
+    Funcion para generar indicadores de un algoritmo de deteccion
+    
+    Parameters
+    ----------
+    cm : dictionary
+    Confusion Matrix result of the algorithm.
+        TP : True Positives
+        TN : True Negatives
+        FP : False Positives
+        FN : False Negatives
+    
+    Returns
+    ----------
+    specifiers : dictionary
+        TPR : Sensitivity (TP/(TP + FN))
+        TNR : Specificity (TN/(TN + FP))
+        PPV : Precision (TP/(TP + FP))
+        NPV : Negative predictive value (TN/(TN + FN))
+        ACC : Accuracy ((TP + TN)/(TP + TN + FP + FN))
+        F1 : F1 Score ((2 * TP)/(2 * TP + FP + FN))
+        MCC : Matthews correlation coefficient ((TP * TN - FP * FN)/sqrt((TP + FP)(TP + FN)(TN + FP)(TN + FN)))
+    """
+    specifiers = {}
+    
+    specifiers['TPR'] = cm['TP'] / (cm['TP'] + cm['FN']) if cm['TP'] + cm['FN'] else 0
+    specifiers['TNR'] = cm['TN'] / (cm['TN'] + cm['FP']) if cm['TN'] + cm['FP'] else 0
+    specifiers['PPV'] = cm['TP'] / (cm['TP'] + cm['FP']) if cm['TP'] + cm['FP'] else 0
+    specifiers['NPV'] = cm['TN'] / (cm['TN'] + cm['FN']) if cm['TN'] + cm['FN'] else 0
+    specifiers['ACC'] = (cm['TP'] + cm['TN']) / (cm['TP'] + cm['TN'] + cm['FP'] + cm['FN']) if cm['TP'] + cm['TN'] + cm['FP'] + cm['FN'] else 0
+    specifiers['F1'] = (2 * cm['TP']) / (2 * cm['TP'] + cm['FP'] + cm['FN']) if 2 * cm['TP'] + cm['FP'] + cm['FN'] else 0
+    specifiers['MCC'] = (cm['TP'] * cm['TN'] - cm['FP'] * cm['FN']) / math.sqrt((cm['TP'] + cm['FP']) * (cm['TP'] + cm['FN']) * (cm['TN'] + cm['FP']) * (cm['TN'] + cm['FN'])) if math.sqrt((cm['TP'] + cm['FP']) * (cm['TP'] + cm['FN']) * (cm['TN'] + cm['FP']) * (cm['TN'] + cm['FN'])) else 0
+    
+    return specifiers

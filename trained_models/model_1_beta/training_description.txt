@@ -1,0 +1,6 @@
+10 epocas
+49 batches
+4096 muestras por batch
+
+Total:
+2007040 (dos millones siete mil cuarenta) muestras

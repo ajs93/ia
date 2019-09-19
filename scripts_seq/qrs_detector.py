@@ -9,6 +9,7 @@ Created on Sun Aug  4 19:50:20 2019
 import os
 import pickle
 import math
+import random
 
 import torch
 import torch.nn.functional as F
@@ -38,7 +39,7 @@ class dataset_loader(Dataset):
         # En la inicializacion, obtengo el total de datos de entrenamiento disponible
         self.slice_limits = []
         self.total_slices = 0
-        self.shape = ()
+        self.shape = None
         
         for this_filename in self.file_names:
             this_file = open(this_filename, 'rb')
@@ -46,8 +47,8 @@ class dataset_loader(Dataset):
             this_data = pickle.load(this_file)
             
             # Del primero saco el shape, deberia ser igual en todos
-            if len(self.shape) == 0:
-                self.shape = (this_data['beat_slices'][0][1] - this_data['beat_slices'][0][0], this_data['data'].shape[1])
+            if self.shape == None:
+                self.shape = this_data['beat_slices'][0][1] - this_data['beat_slices'][0][0]
             
             aux_slice_counter = len(this_data['beat_slices'])
             aux_slice_counter += len(this_data['no_beat_slices'])
@@ -93,6 +94,91 @@ class dataset_loader(Dataset):
         x = x.view(1, 1, 24)
         
         return x, y
+    
+class dataset_loader_optim(Dataset):
+    def __init__(self, database_source_path, target_file_path):
+        # Abro archivo de entrenamiento pasado y obtengo lista de archivos
+        target_file = open(target_file_path, 'r')
+        
+        self.file_names = target_file.read()
+        
+        self.file_names = self.file_names.split('\n')
+        
+        # Eliminacion de elementos nulos
+        self.file_names = list(filter(None, self.file_names))
+        
+        if not database_source_path[-1] == os.sep:
+            database_source_path += os.sep
+        
+        # Acomodo rutas en base a directorio base
+        self.file_names = [database_source_path + s for s in self.file_names]
+        
+        target_file.close()
+        
+        # En la inicializacion, obtengo el total de datos de entrenamiento disponible
+        self.slice_limits = []
+        self.total_slices = 0
+        self.shape = None
+        self.data_list = []
+        
+        for this_filename in self.file_names:
+            this_file = open(this_filename, 'rb')
+            
+            this_data = pickle.load(this_file)
+            
+            # Del primero saco el shape, deberia ser igual en todos
+            if self.shape == None:
+                self.shape = this_data['beat_slices'][0][1] - this_data['beat_slices'][0][0]
+            
+            aux_slice_counter = len(this_data['beat_slices'])
+            aux_slice_counter += len(this_data['no_beat_slices'])
+            
+            self.total_slices += aux_slice_counter
+            self.slice_limits.append(self.total_slices)
+            
+            self.data_list.append(this_data)
+            
+            this_file.close()
+        
+        self.randomizer_list = [i for i in range(self.total_slices)]
+        
+    def __len__(self):
+        return self.total_slices
+    
+    def __getitem__(self, idx):
+        # Obtengo indice interno
+        file_idx = 0
+        
+        while idx >= self.slice_limits[file_idx]:
+            file_idx += 1
+        
+        # Obtengo datos del idx pedido
+        #this_data = pickle.load(open(self.file_names[int(file_idx)], 'rb'))
+        this_data = self.data_list[file_idx]
+        
+        # Con el indice real, devuelvo el dato pedido
+        if file_idx > 0:
+            real_idx = idx - self.slice_limits[file_idx - 1]
+        else:
+            real_idx = idx
+        
+        if real_idx <= len(this_data['beat_slices']) - 1:
+            # Si es latido, la etiqueta es 1
+            this_start = this_data['beat_slices'][real_idx][0]
+            this_end = this_data['beat_slices'][real_idx][1]
+            y = torch.ones(1, 1, 1)
+        else:
+            # Si es no latido, la etiqueta es 0
+            real_idx -= len(this_data['beat_slices'])
+            
+            this_start = this_data['no_beat_slices'][real_idx][0]
+            this_end = this_data['no_beat_slices'][real_idx][1]
+            y = torch.zeros(1, 1, 1)
+            
+        x = torch.Tensor(this_data['data'][this_start:this_end])
+        x = x.view(1, 1, self.shape)
+        
+        return x, y
 
 class qrs_det_1(torch.nn.Module):
     def __init__(self, input_dim):
@@ -122,6 +208,7 @@ class qrs_det_1(torch.nn.Module):
                                      self.conv1_out_channels,
                                      self.conv1_kernel_size,
                                      padding = math.floor(self.conv1_kernel_size / 2))
+        
         self.conv2 = torch.nn.Conv1d(self.conv2_in_channels,
                                      self.conv2_out_channels,
                                      self.conv2_kernel_size,
@@ -142,10 +229,10 @@ class qrs_det_1(torch.nn.Module):
         return x
 
 class qrs_det_2(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, input_dim):
         super(qrs_det_2, self).__init__()
         
-        input_dim = 24
+        self.input_dim = input_dim
         
         self.conv_amount = 10
         conv_kernel_size = 6
@@ -197,45 +284,65 @@ class qrs_det_2(torch.nn.Module):
         
         return x
     
-class qrs_det_3(torch.nn.Module):
-    def __init__(self):
-        super(qrs_det_3, self).__init__()
+class qrs_det_1_beta(torch.nn.Module):
+    def __init__(self, input_dim):
+        super(qrs_det_1_beta, self).__init__()
         
-        input_dim = 24
+        self.input_dim = input_dim
         
-        conv0_kernel_size = 3
-        conv1_kernel_size = 6
-        conv2_kernel_size = 3
+        # Al usar kernels pares, es mas facil calcular las dimensiones luego
+        self.conv1_kernel_size = 8
+        self.conv1_in_channels = 1
+        self.conv1_out_channels = 3
         
-        lin0_input_size = input_dim
-        lin0_output_size = round(input_dim * 2.5)
+        self.conv2_kernel_size = 6
+        self.conv2_in_channels = self.conv1_out_channels
+        self.conv2_out_channels = 6
         
-        lin1_input_size = lin0_output_size - conv1_kernel_size - conv2_kernel_size + 2
-        lin1_output_size = input_dim
+        self.conv3_kernel_size = 4
+        self.conv3_in_channels = self.conv2_out_channels
+        self.conv3_out_channels = 1
         
-        lin2_input_size = lin1_output_size
-        lin2_output_size = 12
+        self.linout_input_size = self.input_dim + 3
+        self.linout_output_size = 1
         
-        lin3_input_size = lin2_output_size
-        lin3_output_size = 1
+        self.input_layer = torch.nn.Softmax(dim = 0)
+
+        self.conv1 = torch.nn.Conv1d(self.conv1_in_channels,
+                                     self.conv1_out_channels,
+                                     self.conv1_kernel_size,
+                                     padding = math.floor(self.conv1_kernel_size / 2))
         
-        self.lin0 = torch.nn.Linear(lin0_input_size, lin0_output_size)
-        self.lin1 = torch.nn.Linear(lin1_input_size, lin1_output_size)
-        self.lin2 = torch.nn.Linear(lin2_input_size, lin2_output_size)
-        self.lin3 = torch.nn.Linear(lin3_input_size, lin3_output_size)
+        self.conv1_activation = torch.nn.ReLU()
         
-        self.conv0 = torch.nn.Conv1d(1, 1, conv0_kernel_size, padding = math.floor(conv0_kernel_size / 2))
-        self.conv1 = torch.nn.Conv1d(1, 1, conv1_kernel_size)
-        self.conv2 = torch.nn.Conv1d(1, 1, conv2_kernel_size)
+        self.conv2 = torch.nn.Conv1d(self.conv2_in_channels,
+                                     self.conv2_out_channels,
+                                     self.conv2_kernel_size,
+                                     padding = math.floor(self.conv2_kernel_size / 2))
+        
+        self.conv2_activation = torch.nn.ReLU()
+        
+        self.conv3 = torch.nn.Conv1d(self.conv3_in_channels,
+                                     self.conv3_out_channels,
+                                     self.conv3_kernel_size,
+                                     padding = math.floor(self.conv3_kernel_size / 2))
+
+        self.conv3_activation = torch.nn.ReLU()
+        
+        self.linout = torch.nn.Linear(self.linout_input_size, self.linout_output_size)
+        
+        self.sig = torch.nn.Sigmoid()
     
     def forward(self, x):
-        x = self.conv0(x)
-        x = F.relu(self.lin0(x))
-        x = F.relu(F.dropout(self.conv1(x), p = 0.25))
-        x = F.relu(F.dropout(self.conv2(x), p = 0.2))
-        x = F.dropout(F.relu(self.lin1(x)), p = 0.1)
-        x = F.dropout(F.relu(self.lin2(x)), p = 0.1)
-        x = F.sigmoid(self.lin3(x))
+       # x = self.input_layer(x)
+        x = self.conv1(x)
+        x = self.conv1_activation(x)
+        x = self.conv2(x)
+        x = self.conv2_activation(x)
+        x = self.conv3(x)
+        x = self.conv3_activation(x)
+        x = self.linout(x)
+        x = self.sig(x)
         
         return x
 

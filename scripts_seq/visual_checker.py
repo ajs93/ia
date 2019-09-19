@@ -19,15 +19,15 @@ if __name__ == "__main__":
     slice_samples = 24
     
     # Ruta y nombre del modelo guardado
-    ia_file_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia"
-    ia_filename = "qrs_det_model_2.pt"
+    ia_file_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia/trained_models/model_1_large"
+    ia_filename = "qrs_det_model_1_epoch_10.pt"
     
     # Archivo a testear
-    rec_path = "/home/augusto/Desktop/GIBIO/processed_dbs/only_MLII_beta/mitdb"
-    rec_filename = "103.bin"
+    rec_path = "/home/augusto/Desktop/GIBIO/processed_dbs/only_MLII_agosto/mitdb"
+    rec_filename = "217.bin"
     
     # Cargo modelo
-    model = qrs_detector.qrs_det_2()
+    model = qrs_detector.qrs_det_1_beta(24)
     model.load_state_dict(torch.load(os.path.join(ia_file_path, ia_filename)))
     model.eval()
     
