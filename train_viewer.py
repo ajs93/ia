@@ -14,8 +14,8 @@ import matplotlib.pyplot as plt
 
 if __name__ == "__main__":
     # Archivo de entrenamiento
-    train_progress_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia/trained_models/model_1_beta_large"
-    train_progress_filename = "qrs_det_model_1_training.bin"
+    train_progress_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia/trained_models/model_rata_v2"
+    train_progress_filename = "qrs_det_model_rata_training.bin"
     
     train_progress = pickle.load(open(os.path.join(train_progress_path, train_progress_filename),'rb'))
     

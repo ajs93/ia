@@ -9,6 +9,7 @@ Funcionalidades para la generacion de los datos
 """
 
 import os
+import pickle
 
 import wfdb
 
@@ -16,6 +17,8 @@ import numpy as np
 from scipy import signal
 
 from fractions import Fraction
+
+import mat4py
 
 def my_split(x, split_size):
     """
@@ -69,23 +72,66 @@ def get_recording_and_resample(recording, target_freq, pre_processing = None):
     """
     
     # Elimino posible extension del recording
+    extension = os.path.splitext(recording)[1]
     recording = os.path.splitext(recording)[0]
     
-    # Obtengo señal pedida
-    data, fields = wfdb.rdsamp(recording)
-    annotation = wfdb.rdann(recording, 'atr')
+    if extension == '.dat':
+        # Obtengo señal pedida
+        data, fields = wfdb.rdsamp(recording)
+        annotation = wfdb.rdann(recording, 'atr')
+        
+        # Filtro anotaciones que no sean latidos
+        no_beats_keys = ['[', '!', ']', 'x', '(', ')', 'p', 't', 'u', '`', "'", '^', '|', '~', '+', 's', 'T', '*', 'D', '=', '"', '@']
+        not_beats_mk = np.isin(annotation.symbol, no_beats_keys, assume_unique = True)
+        beats_mk = np.logical_and( np.ones_like(not_beats_mk), np.logical_not(not_beats_mk) )
+        
+        # Me quedo con las posiciones
+        beats = annotation.sample[beats_mk]
+    elif extension == '.mat':
+        # Si tengo que leer .mat es otro metodo:
+        whole_data = mat4py.loadmat(recording + extension)
+        
+        beats = whole_data['ann']['time']
+        beats = [b[0] for b in beats]
+        
+        # Esto es porque las anotaciones quedan guardadas con valores negativos
+        beats = [b for b in beats if b >= 0]
+        
+        # Esto es porque en las anotaciones tambien hay valores mayores a la señal total
+        beats = [b for b in beats if b < len(whole_data['sig'])]
+        
+        beats = np.array(beats, dtype = int)
+        
+        data = np.array(whole_data['sig'], dtype = float)
+        
+        fields = {}
+        fields['fs'] = whole_data['header']['freq']
+        fields['n_sig'] = whole_data['header']['nsig']
+        fields['sig_len'] = whole_data['header']['nsamp']
+        fields['sig_name'] = whole_data['header']['desc']
+    elif extension == '.bin':
+        # Formato sintetizado propio
+        whole_data = pickle.load(open(recording + extension, 'rb'))
+        
+        beats = whole_data['beats']
+        data = whole_data['data']
+        
+        beats = np.array(beats, dtype = int)
+        data = np.array(data, dtype = float)
+        np.resize(data, (len(data), 1))
+        
+        fields = {}
+        fields['fs'] = whole_data['fs']
+        fields['n_sig'] = 1
+        fields['sig_len'] = len(data)
+        fields['sig_name'] = ['synth']
+    else:
+        print('Formato desconocido...')
+        return
     
     # Pre-procesamiento en caso de ser pasado
     if not pre_processing == None:
         data, fields = pre_processing(data, fields)
-    
-    # Filtro anotaciones que no sean latidos
-    no_beats_keys = ['[', '!', ']', 'x', '(', ')', 'p', 't', 'u', '`', "'", '^', '|', '~', '+', 's', 'T', '*', 'D', '=', '"', '@']
-    not_beats_mk = np.isin(annotation.symbol, no_beats_keys, assume_unique = True)
-    beats_mk = np.logical_and( np.ones_like(not_beats_mk), np.logical_not(not_beats_mk) )
-    
-    # Me quedo con las posiciones
-    beats = annotation.sample[beats_mk]
     
     # Resampleo tanto de señal como de anotaciones
     resample_fraction = Fraction(target_freq, fields['fs'])
@@ -93,9 +139,12 @@ def get_recording_and_resample(recording, target_freq, pre_processing = None):
     data = signal.resample_poly(data, resample_fraction.numerator, resample_fraction.denominator)
     beats = np.round(beats * resample_fraction.numerator / resample_fraction.denominator).astype(int)
     
-    
     fields['fs'] = target_freq
-    fields['sig_len'] = len(data[:,0])
+    
+    if fields['n_sig'] > 1:
+        fields['sig_len'] = len(data[:,0])
+    else:
+        fields['sig_len'] = len(data)
     
     return data, fields, beats
 
@@ -333,13 +382,14 @@ def make_train_set(recording, slice_time, valid_window_size, target_freq, channe
             return None, None, None, None
         else:
             # Elimino los canales innecesarios
-            data = data[:,channel_filter]
+            if fields['n_sig'] > 1:
+                data = data[:,channel_filter]
             
             fields['sig_name'] = [channel_names[i] for i in channel_filter]
-            fields['units'] = [fields['units'][i] for i in channel_filter]
+            #fields['units'] = [fields['units'][i] for i in channel_filter]
             fields['n_sig'] = len(channel_filter)
             fields['beats'] = beats
-            
+    
     # Obtencion de zonas de interes (latido/no latido)
     beat_zones, no_beat_zones = get_beats_nobeats_zones(beats, data.shape[0], target_freq, slice_time, valid_window_size)
     

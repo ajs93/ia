@@ -9,9 +9,10 @@ Created on Mon Jun 24 16:05:41 2019
 import os
 import pickle
 import time
-import math
+import matplotlib.pyplot as plt
 
-from colorama import Fore, Back
+import numpy as np
+
 from progress.bar import ChargingBar
 
 import qrs_detector
@@ -66,21 +67,23 @@ if __name__ == "__main__":
     
     # Tamaño de cada batch
     batch_size = 512
-    total_epochs = 1
+    total_epochs = 5
     #batchs_per_epoch = math.ceil(500e3 / batch_size)
-    batchs_per_epoch = 200 # Todo el dataset
+    batchs_per_epoch = 0 # Todo el dataset
+    
+    flag_make_fourier = False
     
     # Creacion de generadores tanto de entrenamiento como validacion
-    train_gen = qrs_detector.dataset_loader_optim('/home/augusto/Desktop/GIBIO/processed_dbs/only_MLII_agosto',
-                             '/home/augusto/Desktop/GIBIO/processed_dbs/only_MLII_agosto/train_set.txt')
+    train_gen = qrs_detector.dataset_loader_optim('/home/augusto/Desktop/GIBIO/processed_dbs/rata_segmentada_ia_v3',
+                             '/home/augusto/Desktop/GIBIO/processed_dbs/rata_segmentada_ia_v3/train_set.txt')
 
     # Donde guardar el modelo
-    model_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia/trained_models/model_2"
-    model_filename = "qrs_det_model_2_epoch_{}.pt"
+    model_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia/trained_models/model_rata_v3"
+    model_filename = "qrs_det_model_rata_epoch_{}.pt"
     
     # Donde guardar historia del entrenamiento
-    train_progress_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia/trained_models/model_2"
-    train_progress_filename = "qrs_det_model_2_training.bin"
+    train_progress_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia/trained_models/model_rata_v3"
+    train_progress_filename = "qrs_det_model_rata_training.bin"
 
     # Si num_workers no es cero, la RAM aumenta constantemente hasta que explota el SO
     train_dataloader = DataLoader(train_gen,
@@ -89,7 +92,7 @@ if __name__ == "__main__":
                                   num_workers = 0)
     
     # Definicion del modelo
-    model = qrs_detector.qrs_det_2(train_gen.shape)
+    model = qrs_detector.qrs_det_1_beta(train_gen.shape)
     
     loss_fn = torch.nn.BCELoss()
     
@@ -109,14 +112,14 @@ if __name__ == "__main__":
     
     train_progress = []
     
+    input("Press Enter to start.")
+    
     for this_epoch in range(total_epochs):
-        #print(Back.WHITE + Fore.BLACK + "Epoch: {}/{}".format(this_epoch, total_epochs))
-        
         start_time = time.time()
         
         progress_bar = my_bar(this_epoch + 1)
         
-        if batch_size == 0:
+        if batchs_per_epoch == 0:
             progress_bar.max = train_dataloader.__len__()
         else:
             progress_bar.max = batchs_per_epoch
@@ -143,8 +146,14 @@ if __name__ == "__main__":
             
             batch_loss = 0
             
-            for this_sample, this_label in zip(samples[0], samples[1]):                
-                y_pred = model(this_sample)
+            for this_sample, this_label in zip(samples[0], samples[1]):
+                if flag_make_fourier:
+                    this_sample_np = this_sample.view(1,24).numpy()
+                    this_sample_fft = torch.from_numpy(np.float32(np.abs(np.fft.fft(this_sample_np)))).view(1,1,24)
+                    y_pred = model(this_sample_fft)
+                else:
+                    y_pred = model(this_sample)
+                
                 this_loss = loss_fn(y_pred, this_label)
                 batch_loss += this_loss.item()
                 optimizer.zero_grad()
@@ -210,3 +219,4 @@ if __name__ == "__main__":
         progress_bar.finish()
     
     pickle.dump(train_progress, open(os.path.join(train_progress_path, train_progress_filename), 'wb'))
+    input("Press enter to finish...")

@@ -69,17 +69,22 @@ if __name__ == "__main__":
     slice_samples = 24
     
     # Ruta y nombre del modelo guardado
-    ia_file_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia/trained_models/model_1_beta_large"
-    ia_filename = "qrs_det_model_1_epoch_9.pt"
+    ia_file_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia/trained_models/model_rata_synth"
+    ia_filename = "qrs_det_model_rata_epoch_5.pt"
     
     # Archivos contra los que testear
-    test_path = "/home/augusto/Desktop/GIBIO/processed_dbs/only_MLII_agosto"
+    test_path = "/home/augusto/Desktop/GIBIO/processed_dbs/synthetic_rata_db"
     rec_path = test_path
     test_filename = "validation_set.txt"
     
     # Ruta y nombre donde guardar los resultados
-    save_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia/trained_models/model_1_beta_large"
-    save_filename = "qrs_det_model_1_epoch_9_results"
+    save_path = "/home/augusto/Desktop/GIBIO/Algoritmos/ia/trained_models/model_rata_synth"
+    save_filename = "qrs_det_model_rata_epoch_5_{}_results"
+    
+    if test_filename == "validation_set.txt":
+        save_filename = save_filename.format('val')
+    else:
+        save_filename = save_filename.format('test')
     
     if realistic_check:
         save_filename += "_realistic.bin"
@@ -113,6 +118,8 @@ if __name__ == "__main__":
             print("Mode: Realistic check.")
         else:
             print("Mode: Full check.")
+        
+        input("Press enter to start.")
         
         for this_file_idx, (this_file, this_filename) in enumerate(zip(test_filepaths, test_files)):
             print("Evaluating file {}/{}".format(this_file_idx + 1, len(test_filepaths)))
